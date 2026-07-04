@@ -1,0 +1,51 @@
+# Daily pipeline: extract ESIOS -> Supabase raw -> dbt build -> publish docs.
+#
+# Trigger strategy (evidence-based — see README decisions log):
+#   - workflow_dispatch: fired by cron-job.org via GitHub REST API. Primary
+#     trigger, starts within seconds.
+#   - schedule: native cron as best-effort FALLBACK ONLY (empirical hit
+#     rate ~40-50% on this account, measured on mobility-zgz).
+#     Odd minute (23) on purpose: :00 slots are the most congested.
+
+name: daily-pipeline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * *"   # ~07:23 GMT+1, after ESIOS publishes D-1 data
+
+jobs:
+  extract-load:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest tests/ -q
+        # DIDACTIC NOTE: tests gate the load. A pipeline that ships broken
+        # parsing logic to prod because "tests run somewhere else" is a
+        # pipeline waiting to fail silently.
+
+      - name: Extract & merge into raw
+        env:
+          ESIOS_API_TOKEN: ${{ secrets.ESIOS_API_TOKEN }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: python -m extract.main
+
+      # ------------------------------------------------------------------
+      # TODO(phase dbt): dbt build (run + test) against Supabase
+      # TODO(phase dbt): dbt docs generate -> deploy to GitHub Pages
+      # TODO(phase evidence): trigger Evidence rebuild
+      # TODO(keepalive): trivial commit step — prevents GitHub disabling
+      #   scheduled workflows after 60 days of repo inactivity.
+      # ------------------------------------------------------------------
