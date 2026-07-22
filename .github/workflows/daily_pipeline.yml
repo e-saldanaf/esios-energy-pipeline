@@ -1,48 +1,30 @@
-# Daily pipeline: extract ESIOS -> Supabase raw -> dbt build -> publish docs.
-#
-# Trigger strategy (evidence-based — see README decisions log):
-#   - workflow_dispatch: fired by cron-job.org via GitHub REST API. Primary
-#     trigger, starts within seconds.
-#   - schedule: native cron as best-effort FALLBACK ONLY (empirical hit
-#     rate ~42% on this account, measured on mobility-zgz). Odd minute on
-#     purpose: :00 slots are the most congested.
-#
-# DIDACTIC NOTE — Feature flag deployment:
-#   dbt steps are guarded by the repository variable DBT_ENABLED. The
-#   pipeline ships TODAY with extract-only scope and green runs; when the
-#   dbt project lands, flipping one variable activates the full path.
-#   No YAML rewrite, no red runs in between. This is progressive delivery
-#   applied to a data pipeline.
-
 name: daily-pipeline
 
 on:
   workflow_dispatch:
+    inputs:
+      extract_start:
+        description: "Start date (yyyy-mm-dd). Leave empty for automatic mode (D-2)."
+        required: false
+      extract_end:
+        description: "End date (yyyy-mm-dd). Leave empty for automatic mode (today)."
+        required: false
   schedule:
-    - cron: "23 6 * * *"   # ~07:23 GMT+1, after ESIOS publishes D-1 data
+    - cron: "23 6 * * *"
 
-# DIDACTIC NOTE — Concurrency guard:
-#   If the cron fallback and the external dispatch ever fire close together,
-#   two runs writing to the same tables would race. This serialises them:
-#   the second run queues instead of overlapping. cancel-in-progress: false
-#   because a running load should finish, not be killed mid-transaction.
 concurrency:
   group: daily-pipeline
   cancel-in-progress: false
 
 permissions:
-  contents: write   # keepalive commit
-  pages: write      # dbt docs deploy
-  id-token: write   # required by deploy-pages OIDC
+  contents: write
+  pages: write
+  id-token: write
 
 jobs:
   pipeline:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
-    # LOG_FORMAT at job level: inherited by ALL steps including pytest.
-    # Tests fail at collection if logging_setup tries to import settings
-    # without credentials — os.getenv("LOG_FORMAT") avoids that coupling.
     env:
       LOG_FORMAT: json
 
@@ -59,7 +41,6 @@ jobs:
 
       - name: Run unit tests
         run: pytest tests/ -q
-        # Tests gate the load: broken parsing logic never reaches prod.
 
       - name: Extract & merge into raw
         env:
@@ -67,12 +48,10 @@ jobs:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          EXTRACT_START: ${{ inputs.extract_start }}
+          EXTRACT_END: ${{ inputs.extract_end }}
         run: python -m extract.main
 
-      # ------------------------------------------------------------------
-      # dbt phase — activated by setting repo variable DBT_ENABLED=true
-      # (Settings > Secrets and variables > Actions > Variables)
-      # ------------------------------------------------------------------
       - name: dbt build (run + test)
         if: vars.DBT_ENABLED == 'true'
         working-directory: dbt
@@ -83,9 +62,6 @@ jobs:
         run: |
           dbt deps
           dbt build --profiles-dir .
-        # DIDACTIC NOTE: `dbt build` = run + test + snapshot + seed in DAG
-        # order. A model's tests run BEFORE downstream models build, so bad
-        # data stops propagating at the first broken contract.
 
       - name: Generate dbt docs
         if: vars.DBT_ENABLED == 'true'
@@ -95,8 +71,6 @@ jobs:
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: dbt docs generate --profiles-dir . --static
-        # --static bundles everything into one self-contained index.html —
-        # exactly what a static host like GitHub Pages wants.
 
       - name: Upload docs artifact
         if: vars.DBT_ENABLED == 'true'
@@ -104,11 +78,6 @@ jobs:
         with:
           path: dbt/target
 
-      # ------------------------------------------------------------------
-      # Keepalive: prevents GitHub from disabling scheduled workflows after
-      # 60 days without repo activity. Signed by the Actions bot (does NOT
-      # count towards your contribution graph — plumbing, not theatre).
-      # ------------------------------------------------------------------
       - name: Keepalive commit
         run: |
           mkdir -p .github
@@ -120,8 +89,6 @@ jobs:
           git push
 
   deploy-docs:
-    # Separate job: deploy-pages requires the github-pages environment and
-    # keeps deploy permissions isolated from the job that touches the DB.
     if: vars.DBT_ENABLED == 'true'
     needs: pipeline
     runs-on: ubuntu-latest

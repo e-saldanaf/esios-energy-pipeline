@@ -46,6 +46,10 @@ This section is the project's real deliverable.
 | **Pipeline as Supabase keepalive** | Separate ping mechanism | Supabase pauses free projects after 7 days without connections. The daily pipeline generates a connection every run, keeping the project active organically — no additional mechanism needed. Verified empirically on first run attempt. |
 | **10-minute raw granularity + hourly aggregation in dbt** | Hourly-only ingestion | ESIOS national generation indicators are natively 10-minute. No hourly aggregate exists at national scope. Raw preserves source fidelity; `date_trunc + sum` in dbt staging produces the hourly grain. Transformation belongs to the transform layer. |
 | **geo_id=3 filter in staging, not in extract** | Filter at API request time | The extract layer has no opinion on business logic. Filtering by geography is a transformation decision — it lives in dbt staging where it is documented, tested, and version-controlled alongside the model that uses it. |
+| **No cap on manual extraction window** | max_window_days safety cap | 
+Single operator (personal portfolio). The operator knows what they're 
+doing when they set EXTRACT_START/EXTRACT_END. Enterprise context would 
+require chunking and validation; that complexity is not justified here. |
 
 ## Setup
 

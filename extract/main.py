@@ -3,6 +3,9 @@
 Run locally:    python -m extract.main
 Run in CI:      same command, secrets injected as env vars.
 
+Manual backfill (any date range):
+    EXTRACT_START=2025-01-01 EXTRACT_END=2025-12-31 python -m extract.main
+
 DIDACTIC NOTE — Failure isolation:
     One indicator failing must not poison the rest. Each indicator runs in
     its own try/except and its own transaction; the process exits non-zero
@@ -33,6 +36,12 @@ def build_conninfo() -> str:
 
 
 def run() -> int:
+    # Compute window once per run — all indicators share the same window.
+    # Manual mode: driven by EXTRACT_START / EXTRACT_END env vars.
+    # Automatic mode: D-2 to D (see watermark.py for reasoning).
+    start, end = get_extraction_window()
+    logger.info("pipeline_start", extra={"ctx": {"start": start, "end": end}})
+
     client = EsiosClient()
     failures = 0
 
@@ -44,7 +53,6 @@ def run() -> int:
 
         for indicator_id, slug in INDICATORS.items():
             try:
-                start, end = get_extraction_window(conn, indicator_id)
                 values = client.get_indicator_values(indicator_id, start, end)
                 rows = normalise_values(indicator_id, values)
                 merged = merge_indicator_values(conn, rows)

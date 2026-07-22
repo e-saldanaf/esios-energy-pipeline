@@ -1,40 +1,57 @@
-"""Watermark logic: compute the extraction window per indicator.
+"""Extraction window logic.
 
-DIDACTIC NOTE — Design for unreliable schedulers:
-    GitHub Actions cron is best-effort (empirically ~40-50% hit rate on
-    hourly schedules). Instead of assuming punctuality, every run derives
-    its window from the data itself: [last loaded timestamp, now].
-    Skipped runs become latency, never data loss. The same principle
-    underpins Airflow's data-interval model — this is scheduler-agnostic
-    engineering, not a GitHub workaround.
+DIDACTIC NOTE — Two modes, zero implicit state:
+
+    AUTOMATIC (default, daily cron):
+        start = today - 2 days (UTC midnight)
+        end   = today (UTC midnight)
+
+        Why D-2 and not D-1? The cron runs at ~07:23 GMT+1. At that time,
+        D-1 data is complete and published by ESIOS. D-2 is included as a
+        one-day overlap to capture ESIOS revisions: generation measured values
+        are corrected days after initial publication. The MERGE's
+        `IS DISTINCT FROM` branch picks up those corrections for free.
+
+    MANUAL (backfill / re-extraction):
+        Driven by EXTRACT_START and EXTRACT_END env vars (yyyy-mm-dd).
+        Set them in the GitHub Actions workflow_dispatch inputs or locally:
+
+            EXTRACT_START=2025-01-01 EXTRACT_END=2025-12-31 python -m extract.main
+
+        No cap on the window size — single operator, knows what they're doing.
+        Enterprise context would require chunking; that complexity is not
+        justified here (see decisions log).
+
+DIDACTIC NOTE — Why watermark is gone:
+    The previous watermark design read max(datetime_utc) from the table to
+    derive the next window. That created implicit state: the pipeline's
+    behaviour depended on what was already in the DB. Explicit date parameters
+    are simpler, more predictable, and easier to reason about in an interview.
+    The table's `updated_at` column now answers "what changed recently?"
+    without any watermark query.
 """
 
+import os
 from datetime import datetime, timedelta, timezone
 
-from psycopg import Connection
 
-from extract.config import settings
-from extract.sql_loader import load_sql
+def get_extraction_window() -> tuple[datetime, datetime]:
+    """Return (start, end) UTC window for the current run.
 
-
-def get_extraction_window(
-    conn: Connection, indicator_id: int
-) -> tuple[datetime, datetime]:
-    """Return (start, end) UTC window for one indicator.
-
-    - First run (no data): start = configured backfill start.
-    - Normal run: start = watermark (inclusive on purpose: ESIOS revises
-      recent values, and MERGE makes re-reading the boundary hour free).
-    - Long outage: window capped at `max_window_days`; the next runs keep
-      catching up chunk by chunk until current. Bounded self-healing.
+    Reads EXTRACT_START / EXTRACT_END from environment.
+    Falls back to automatic D-2 / D mode if not set.
     """
-    sql = load_sql("queries/get_watermark.sql")
-    with conn.cursor() as cur:
-        cur.execute(sql, {"indicator_id": indicator_id})
-        row = cur.fetchone()
+    raw_start = os.getenv("EXTRACT_START")
+    raw_end   = os.getenv("EXTRACT_END")
 
-    watermark: datetime | None = row[0] if row else None
-    start = watermark or settings.default_backfill_start
-    now = datetime.now(timezone.utc)
-    end = min(start + timedelta(days=settings.max_window_days), now)
-    return start, end
+    if raw_start and raw_end:
+        # Manual mode: parse dates, set to UTC midnight
+        start = datetime.strptime(raw_start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end   = datetime.strptime(raw_end,   "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return start, end
+
+    # Automatic mode: D-2 to D (UTC midnight boundaries)
+    today = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return today - timedelta(days=2), today

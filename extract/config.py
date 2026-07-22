@@ -9,11 +9,15 @@ DIDACTIC NOTE — Why pydantic-settings instead of os.environ:
     3. Single source of truth: every module imports `settings`, nobody
        reads os.environ directly. This is Clean Architecture's config layer.
 
+    Exception: LOG_FORMAT and EXTRACT_START/EXTRACT_END are read with
+    os.getenv directly. LOG_FORMAT is infrastructure config (display), not
+    business config — importing settings in logging_setup would create a
+    circular dependency. EXTRACT_START/EXTRACT_END are run-time overrides
+    read inside watermark.py, not startup config.
+
 Secrets are NEVER hardcoded here. Locally they come from `.env`
 (git-ignored); in CI they are injected as GitHub Actions secrets.
 """
-
-from datetime import datetime, timezone
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,26 +39,13 @@ class Settings(BaseSettings):
     db_user: str
     db_password: str
 
-    # --- Pipeline behaviour ---
-    # First-run backfill start. Keep it modest: didactic project, not a
-    # historical archive. Extend later if the dashboard needs more history.
-    default_backfill_start: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-    # Safety cap per run (days). If the watermark is very old (long outage),
-    # we extract in bounded chunks instead of one giant request that could
-    # hit API limits or blow memory. Self-healing, but politely.
-    max_window_days: int = 31    
 
 # DIDACTIC NOTE — Indicator registry:
 # One generic raw table + this registry means adding a new source indicator
 # (e.g. demand in phase 2) requires ZERO new DDL and ZERO new SQL.
-# That extensibility claim will become a LinkedIn post when phase 2 lands.
 #
-# indicator_id -> human-readable slug (used only for logging/docs).
-# 600 = Precio mercado SPOT diario (confirmed).
-# Generation-by-technology ids: verify them against the live catalogue
-# using `EsiosClient.list_indicators()` before enabling them.
-
+# All ids verified against live ESIOS catalogue on 2026-07-22.
+# geo_id filtering (Spain = 3) happens in dbt staging, not here.
 INDICATORS: dict[int, str] = {
     # Hourly spot price — multi-geo (MIBEL + European market).
     # geo_id=3 (España) filtered in staging.
@@ -62,7 +53,6 @@ INDICATORS: dict[int, str] = {
 
     # National generation mix — 10-minute granularity, geo_id=3 (España) only.
     # Aggregated to hourly in dbt staging via date_trunc + sum/avg.
-    # All verified against live catalogue on 2026-07-22.
     2038:  "generation_wind",
     2040:  "generation_coal",
     2041:  "generation_combined_cycle",
