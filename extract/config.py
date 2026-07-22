@@ -43,11 +43,7 @@ class Settings(BaseSettings):
     # Safety cap per run (days). If the watermark is very old (long outage),
     # we extract in bounded chunks instead of one giant request that could
     # hit API limits or blow memory. Self-healing, but politely.
-    max_window_days: int = 31
-    
-    # Logging format: 'text' for local dev (coloured), 'json' for CI/production.
-    # Set LOG_FORMAT=json in GitHub Actions env; leave as default locally.
-    log_format: str = "text"
+    max_window_days: int = 31    
 
 # DIDACTIC NOTE — Indicator registry:
 # One generic raw table + this registry means adding a new source indicator

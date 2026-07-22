@@ -6,16 +6,15 @@ DIDACTIC NOTE — Dual formatter pattern:
     structured. But JSON is unreadable in a local terminal.
 
     Solution: two formatters, one env var to switch.
-    - LOG_FORMAT=json  → JSON (default in CI: GitHub Actions sets it)
-    - LOG_FORMAT=text  → coloured human-readable (default in local .env)
+    - LOG_FORMAT=json  → JSON (default in CI: set at job level in Actions)
+    - LOG_FORMAT=text  → coloured human-readable (default locally)
 
-    The code that emits log calls never changes — only the formatter does.
-    Same principle as dbt's target: prod vs dev, same models, different
-    warehouse. Separating *what* to log from *how* to format it is the
-    logging equivalent of Clean Architecture.
-
-ANSI colour codes (work in VS Code integrated terminal and most Unix
-terminals; Windows cmd.exe doesn't support them, but VS Code does):
+    DIDACTIC NOTE — Why os.getenv here and not settings:
+    logging_setup is imported at module load time by every other module.
+    Importing settings here would create a circular dependency AND would
+    require credentials to be present even when running pure unit tests.
+    LOG_FORMAT is infrastructure config (how to display), not business
+    config (what to do) — os.getenv is the correct tool for this layer.
 """
 
 import json
@@ -24,11 +23,11 @@ import os
 from datetime import datetime, timezone
 
 # ── ANSI colours ──────────────────────────────────────────────────────────────
-_RESET  = "\033[0m"
-_GREY   = "\033[38;5;240m"
-_CYAN   = "\033[36m"
-_YELLOW = "\033[33m"
-_RED    = "\033[31m"
+_RESET    = "\033[0m"
+_GREY     = "\033[38;5;240m"
+_CYAN     = "\033[36m"
+_YELLOW   = "\033[33m"
+_RED      = "\033[31m"
 _BOLD_RED = "\033[1;31m"
 
 _LEVEL_COLOURS = {
@@ -68,7 +67,6 @@ class TextFormatter(logging.Formatter):
         logger = f"{_GREY}{record.name}{_RESET}"
         msg    = record.getMessage()
 
-        # Inline context fields (from extra={"ctx": {...}})
         ctx = ""
         if hasattr(record, "ctx"):
             parts = [f"{k}={v}" for k, v in record.ctx.items()]
@@ -85,14 +83,16 @@ class TextFormatter(logging.Formatter):
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 def _make_formatter() -> logging.Formatter:
-    """Pick formatter based on settings.log_format.
+    """Pick formatter based on LOG_FORMAT env var.
 
-    Centralised in Settings like every other config value — no direct
-    os.getenv() calls outside of config.py. Consistent with how the rest
-    of the project accesses configuration.
+    Reads os.getenv directly — intentionally does NOT use settings.
+    See module docstring for the reasoning.
+
+    Defaults to 'text' so local runs are readable without any config.
+    CI sets LOG_FORMAT=json at job level in the workflow.
     """
-    from extract.config import settings  # local import to avoid circular
-    return JsonFormatter() if settings.log_format.lower() == "json" else TextFormatter()
+    fmt = os.getenv("LOG_FORMAT", "text").lower()
+    return JsonFormatter() if fmt == "json" else TextFormatter()
 
 
 def get_logger(name: str) -> logging.Logger:
