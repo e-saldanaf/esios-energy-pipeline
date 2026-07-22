@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Extract: automatic (D-2 to today)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "extract.main",
+            "justMyCode": true
+        },
+        {
+            "name": "Extract: manual backfill",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "extract.main",
+            "justMyCode": true,
+            "env": {
+                "EXTRACT_START": "2026-01-01",
+                "EXTRACT_END": "2026-01-31"
+            }
+        },
+        {
+            "name": "Check connection",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.check_connection",
+            "justMyCode": true
+        }
+    ]
+}
