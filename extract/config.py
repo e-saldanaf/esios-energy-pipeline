@@ -44,7 +44,10 @@ class Settings(BaseSettings):
     # we extract in bounded chunks instead of one giant request that could
     # hit API limits or blow memory. Self-healing, but politely.
     max_window_days: int = 31
-
+    
+    # Logging format: 'text' for local dev (coloured), 'json' for CI/production.
+    # Set LOG_FORMAT=json in GitHub Actions env; leave as default locally.
+    log_format: str = "text"
 
 # DIDACTIC NOTE — Indicator registry:
 # One generic raw table + this registry means adding a new source indicator
@@ -55,10 +58,22 @@ class Settings(BaseSettings):
 # 600 = Precio mercado SPOT diario (confirmed).
 # Generation-by-technology ids: verify them against the live catalogue
 # using `EsiosClient.list_indicators()` before enabling them.
+
 INDICATORS: dict[int, str] = {
-    600: "spot_market_price",
-    # TODO(phase-1): confirm generation ids via list_indicators("generación")
-    # e.g. 1433: "generation_wind", ...
+    # Hourly spot price — multi-geo (MIBEL + European market).
+    # geo_id=3 (España) filtered in staging.
+    600:   "spot_market_price",
+
+    # National generation mix — 10-minute granularity, geo_id=3 (España) only.
+    # Aggregated to hourly in dbt staging via date_trunc + sum/avg.
+    # All verified against live catalogue on 2026-07-22.
+    2038:  "generation_wind",
+    2040:  "generation_coal",
+    2041:  "generation_combined_cycle",
+    2042:  "generation_hydro",
+    2044:  "generation_solar_pv",
+    2051:  "generation_cogen_residues",
+    10004: "generation_total",
 }
 
 

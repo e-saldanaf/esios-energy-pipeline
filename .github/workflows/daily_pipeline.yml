@@ -40,6 +40,7 @@ jobs:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          LOG_FORMAT: json
         run: python -m extract.main
 
       # ------------------------------------------------------------------

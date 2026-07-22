@@ -42,6 +42,10 @@ This section is the project's real deliverable.
 | **`MERGE` (SQL:2003)** | `INSERT ... ON CONFLICT` | ANSI standard → transferable to Redshift/Snowflake/BigQuery. Conditional `WHEN MATCHED AND ... IS DISTINCT FROM` branch writes only real changes (ESIOS revises published values). Caveat owned: MERGE isn't race-proof under concurrent writers — we have exactly one. |
 | **SQL in `.sql` files** | SQL strings inside Python | Reviewable diffs, sqlfluff-lintable, dbt's philosophy applied to the extract layer. Python orchestrates; SQL declares. |
 | **One generic raw table (long format)** | One table per indicator | Adding an indicator = one config line, zero DDL. Pivoting to wide format belongs to dbt staging, not to ingestion. |
+| **Dedicated Supabase project** | Shared project with mobility-zgz | Blast radius isolation: a runaway backfill in one project cannot put the other in read-only mode. Credential rotation is independent. Free tier allows 2 active projects. |
+| **Pipeline as Supabase keepalive** | Separate ping mechanism | Supabase pauses free projects after 7 days without connections. The daily pipeline generates a connection every run, keeping the project active organically — no additional mechanism needed. Verified empirically on first run attempt. |
+| **10-minute raw granularity + hourly aggregation in dbt** | Hourly-only ingestion | ESIOS national generation indicators are natively 10-minute. No hourly aggregate exists at national scope. Raw preserves source fidelity; `date_trunc + sum` in dbt staging produces the hourly grain. Transformation belongs to the transform layer. |
+| **geo_id=3 filter in staging, not in extract** | Filter at API request time | The extract layer has no opinion on business logic. Filtering by geography is a transformation decision — it lives in dbt staging where it is documented, tested, and version-controlled alongside the model that uses it. |
 
 ## Setup
 
