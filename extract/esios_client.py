@@ -75,7 +75,7 @@ class EsiosClient:
         DIDACTIC NOTE — Use this (not blog posts) to confirm the generation
         indicator ids for config.INDICATORS. APIs drift; catalogues don't lie.
         """
-        response = self.session.get(f"{settings.esios_base_url}/indicators", timeout=120
+        response = self.session.get(f"{settings.esios_base_url}/indicators", timeout=120)
         response.raise_for_status()
         indicators = response.json().get("indicators", [])
         if text_filter:

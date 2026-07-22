@@ -47,7 +47,7 @@ def get_extraction_window() -> tuple[datetime, datetime]:
     if raw_start and raw_end:
         # Manual mode: parse dates, set to UTC midnight
         start = datetime.strptime(raw_start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        end   = datetime.strptime(raw_end,   "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end   = datetime.strptime(raw_end,   "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
         return start, end
 
     # Automatic mode: D-2 to D (UTC midnight boundaries)
