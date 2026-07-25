@@ -1,4 +1,9 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "dbt.dbtPythonPathOverride": "C:\\Users\\esald\\.conda\\envs\\dbt-course\\python.exe",
+    "dbt.dbtPath": "C:\\Users\\esald\\.conda\\envs\\dbt-course\\Scripts\\dbt.exe",
+    "sqlfluff.executablePath": "C:\\Users\\esald\\.conda\\envs\\dbt-course\\Scripts\\sqlfluff.exe",
+    "sqlfluff.dialect": "postgres",
+    "dbt.perspectiveTheme": "Vintage"
 }
