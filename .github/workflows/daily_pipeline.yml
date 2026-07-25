@@ -54,7 +54,7 @@ jobs:
 
       - name: dbt build (run + test)
         if: vars.DBT_ENABLED == 'true'
-        working-directory: dbt
+        working-directory: dbt/esios_energy
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}
@@ -65,7 +65,7 @@ jobs:
 
       - name: Generate dbt docs
         if: vars.DBT_ENABLED == 'true'
-        working-directory: dbt
+        working-directory: dbt/esios_energy
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}
@@ -76,7 +76,7 @@ jobs:
         if: vars.DBT_ENABLED == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dbt/target
+          path: dbt/esios_energy/target
 
       - name: Keepalive commit
         run: |
