@@ -1,0 +1,67 @@
+version: 2
+
+models:
+  - name: fct_hourly_market
+    description: >
+      Hourly grain fact table. One row per hour with price, generation by
+      technology, and derived renewable metrics. Primary mart for time-series
+      analysis and the Evidence dashboard.
+    columns:
+      - name: hour_utc
+        description: Hour timestamp in UTC. Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: price_eur_mwh
+        description: Spot market price for Spain (geo_id=3) in EUR/MWh.
+        tests:
+          - not_null
+      - name: renewable_pct
+        description: Percentage of renewable generation (wind + solar + hydro).
+        tests:
+          - not_null
+
+  - name: mart_daily_summary
+    description: >
+      Daily aggregation of the hourly market. One row per day with price
+      stats, generation totals, and renewable share.
+    columns:
+      - name: date_utc
+        description: Date in UTC. Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: avg_price_eur_mwh
+        description: Daily average spot price in EUR/MWh.
+        tests:
+          - not_null
+      - name: renewable_pct
+        description: Daily renewable share (%).
+        tests:
+          - not_null
+
+  - name: mart_renewables_price_impact
+    description: >
+      Daily view of the merit order effect: renewable share vs price.
+      One row per day. Powers the scatter plot in the dashboard.
+    columns:
+      - name: date_utc
+        description: Date. Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: renewable_pct
+        description: Daily renewable share (%).
+        tests:
+          - not_null
+
+  - name: mart_technology_mix
+    description: >
+      Monthly aggregation of generation by technology. One row per month.
+      Powers the stacked area chart in the dashboard.
+    columns:
+      - name: month_utc
+        description: Month timestamp. Primary key.
+        tests:
+          - unique
+          - not_null
