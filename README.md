@@ -12,10 +12,10 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
                           Supabase (Postgres 17, schema raw)
                                           ▼
                      dbt Core (staging ▸ intermediate ▸ marts)
-                          ├── tests + snapshots
+                          ├── 17 tests (source + models)
                           ├── dbt docs ──▶ GitHub Pages
                           ▼
-                     Evidence.dev static dashboard
+                     Evidence.dev static dashboard (🔜)
 ```
 
 ## Project status
@@ -24,9 +24,10 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
 |---|---|
 | 1. Extract layer (explicit window + MERGE + SQL directory) | ✅ Complete |
 | 2. CI/CD (Actions + secrets + keepalive + manual backfill inputs) | ✅ Complete |
-| 3. dbt layer (models, tests, snapshots, docs) | 🔜 Next |
-| 4. Evidence.dev dashboard | 🔜 Pending |
-| 5. Demand indicator + weather correlation | 🗺️ Roadmap |
+| 3. dbt layer (staging, intermediate, marts, tests, docs) | ✅ Complete |
+| 4. Evidence.dev dashboard | 🔜 Next |
+| 5. cron-job.org (precise scheduling) | 🔜 Pending |
+| 6. Demand indicator + weather correlation | 🗺️ Roadmap |
 
 ## Architecture
 
@@ -72,7 +73,7 @@ Primary key: `(indicator_id, datetime_utc, geo_id)` — guarantees idempotency.
 
 | ID | Slug | Granularity | Geo scope |
 |---|---|---|---|
-| 600 | `spot_market_price` | Hourly | 6 countries (filtered to Spain in staging) |
+| 600 | `spot_market_price` | 10-min | 6 countries (filtered to Spain in staging) |
 | 2038 | `generation_wind` | 10-min | Spain only |
 | 2040 | `generation_coal` | 10-min | Spain only |
 | 2041 | `generation_combined_cycle` | 10-min | Spain only |
@@ -82,40 +83,76 @@ Primary key: `(indicator_id, datetime_utc, geo_id)` — guarantees idempotency.
 | 10004 | `generation_total` | 10-min | Spain only |
 
 All IDs verified against the live ESIOS catalogue on 2026-07-22.
+All indicators are natively 10-minute. Price is aggregated to hourly via `avg`
+in staging; generation via `sum`. Both are joined at hourly grain in intermediate.
+
+### dbt layer
+
+```
+sources (_sources.yml)
+    raw.esios_indicator_values  ← freshness: warn 36h, error 72h
+            │
+    ┌───────┴────────┐
+    ▼                ▼
+stg_esios__      stg_esios__       stg_esios__
+hourly_prices    generation        technologies
+(view)           (view)            (view, seed)
+    │                │
+    └───────┬────────┘
+            ▼
+    int_hourly_market
+    (view — price × generation join)
+            │
+            ▼
+    fct_hourly_market          ← 13,635 rows, table
+            │
+    ┌───────┴──────────────────┐
+    ▼                          ▼
+mart_daily_summary      mart_renewables_price_impact
+(table)                 (table — merit order effect)
+    │
+    ▼
+mart_technology_mix
+(table — monthly generation mix)
+```
+
+**17 data tests:** 4 source `not_null` + 13 model `unique`/`not_null` on marts.
+
+**dbt docs:** published to GitHub Pages on every CI run.
 
 ## Decisions log
-
-Deliberate architecture decisions, with the trade-off each one accepts.
-This section is the project's real interview deliverable.
 
 | Decision | Alternative rejected | Why |
 |---|---|---|
 | **No Airflow** | Airflow (daily driver at work) | A single daily batch with no cross-DAG dependencies doesn't justify an orchestrator's operational cost. Choosing NOT to use a tool you know is an architecture decision too. |
 | **cron-job.org → `workflow_dispatch`** | GitHub `schedule` alone | Measured evidence: hourly `schedule` crons achieved ~42% hit rate on this account. Dispatch via REST API starts in seconds. Native cron kept as fallback. |
-| **Explicit date window (D-2/D)** | Watermark-based extraction | Watermark creates implicit state: pipeline behaviour depends on what is already in the DB. Explicit parameters are simpler, more predictable, and easier to reason about. The `updated_at` column answers "what changed recently?" without any watermark query. D-2 overlap captures ESIOS revisions for free via `IS DISTINCT FROM`. |
-| **Inclusive end date UX** | Exclusive end (API convention) | Users think in calendar dates. `EXTRACT_END=2026-01-31` should load January 31st, not stop before it. The code adds one day internally — the API boundary is an implementation detail, not a user concern. |
-| **Postgres (Supabase) as warehouse** | MotherDuck / columnar DWH | At ~10² rows/day, columnar storage buys nothing. Free tier, most mature dbt adapter, native Evidence connection. I know exactly at which volume this decision stops scaling — and I'd move to Redshift, which I run in production. |
-| **Session pooler (port 5432)** | Direct connection / transaction pooler | Direct connection is IPv6-only → CI runners fail. Transaction pooler destroys temp tables between statements → MERGE pattern breaks. Session pooler is the only option that satisfies both constraints simultaneously. |
-| **`MERGE` (SQL:2003)** | `INSERT ... ON CONFLICT` | ANSI standard → transferable to Redshift/Snowflake/BigQuery. Conditional `WHEN MATCHED AND ... IS DISTINCT FROM` writes only real changes. ESIOS revises published values — this is a real business case, not defensive boilerplate. Concurrency caveat owned: not race-proof under concurrent writers — we have exactly one. |
-| **`IF NOT EXISTS` + `TRUNCATE` on temp table** | `DROP / CREATE` per indicator | DDL inside a transaction can cause implicit commits. `IF NOT EXISTS` guarantees existence; `TRUNCATE` guarantees cleanliness between indicators in the same connection. Discovered and fixed on first production run. |
-| **SQL in `.sql` files** | SQL strings inside Python | Reviewable diffs, sqlfluff-lintable, IDE syntax highlighting. Python orchestrates; SQL declares. dbt's philosophy applied to the extract layer. |
-| **One generic raw table (long format)** | One table per indicator | Adding an indicator = one config line, zero DDL. Pivoting to wide format belongs to dbt staging, not ingestion. |
-| **10-minute raw granularity, hourly in staging** | Hourly-only ingestion | ESIOS national generation indicators are natively 10-minute. No hourly national aggregate exists. Raw preserves source fidelity; `date_trunc + sum` in dbt staging produces the hourly grain. Transformation belongs to the transform layer. |
-| **geo_id=3 filter in staging, not in extract** | Filter at API request time | The extract layer has no opinion on business logic. Filtering by geography is a transformation decision — documented, tested, and version-controlled alongside the model that uses it. |
-| **Dedicated Supabase project** | Shared project with mobility-zgz | Blast radius isolation: a runaway backfill in one project cannot put the other in read-only mode. Credential rotation is independent. Free tier allows 2 active projects. |
-| **Pipeline as Supabase keepalive** | Separate ping mechanism | Supabase pauses free projects after 7 days without connections. The daily pipeline generates a connection every run, keeping the project active organically. Verified empirically on first run attempt. |
-| **No cap on manual extraction window** | `max_window_days` safety cap | Single operator (personal portfolio). The operator knows what they're doing when setting `EXTRACT_START`/`EXTRACT_END`. Enterprise context would require chunking and validation; that complexity is not justified here. |
-| **Dual log formatter (text/json)** | JSON-only logging | JSON logs are for machines. `LOG_FORMAT=text` (default locally) gives coloured human-readable output in the VS Code terminal. `LOG_FORMAT=json` (set at CI job level) feeds structured logs to GitHub Actions. `os.getenv` used directly — importing `settings` here would create a circular dependency at module load time. |
-| **`DBT_ENABLED` feature flag** | Deploy dbt steps immediately | dbt project doesn't exist yet. The flag lets the pipeline run green in CI today and activates the full path when dbt lands — no YAML rewrite, no red runs in between. Progressive delivery applied to a data pipeline. |
+| **Explicit date window (D-2/D)** | Watermark-based extraction | Watermark creates implicit state. Explicit parameters are simpler, more predictable, and easier to reason about. `updated_at` answers "what changed recently?" without any watermark query. D-2 overlap captures ESIOS revisions via `IS DISTINCT FROM`. |
+| **Inclusive end date UX** | Exclusive end (API convention) | Users think in calendar dates. The code adds one day internally — API boundary is an implementation detail. |
+| **Postgres (Supabase) as warehouse** | MotherDuck / columnar DWH | At ~10² rows/day, columnar storage buys nothing. Free tier, most mature dbt adapter. I know exactly at which volume this stops scaling — and I'd move to Redshift, which I run in production. |
+| **Session pooler (port 5432)** | Direct connection / transaction pooler | Direct connection is IPv6-only → CI runners fail. Transaction pooler destroys temp tables → MERGE pattern breaks. Session pooler satisfies both constraints simultaneously. |
+| **`MERGE` (SQL:2003)** | `INSERT ... ON CONFLICT` | ANSI standard → transferable to Redshift/Snowflake/BigQuery. `IS DISTINCT FROM` writes only real changes. ESIOS revises published values — real business case, not boilerplate. |
+| **`IF NOT EXISTS` + `TRUNCATE` on temp table** | `DROP / CREATE` per indicator | Discovered on first production run. Savepoint rollback doesn't destroy temp tables — `IF NOT EXISTS` + `TRUNCATE` makes the loader idempotent across indicators. |
+| **SQL in `.sql` files** | SQL strings inside Python | Reviewable diffs, sqlfluff-lintable. Python orchestrates; SQL declares. dbt's philosophy applied to the extract layer. |
+| **One generic raw table (long format)** | One table per indicator | Adding an indicator = one config line, zero DDL. Pivoting belongs to dbt staging. |
+| **10-minute raw, hourly in staging** | Hourly-only ingestion | ESIOS national indicators are natively 10-minute. Raw preserves source fidelity; `date_trunc + sum/avg` in staging produces hourly grain. Transformation belongs to the transform layer. |
+| **`avg` for price aggregation, `sum` for generation** | Both `sum` or both `avg` | Price is a rate (€/MWh) — average is semantically correct. Generation is energy (MWh) — additive, so sum is correct. Domain semantics drive the aggregation function. |
+| **`geo_id=3` filter in staging, not in extract** | Filter at API request time | Extract has no opinion on business logic. Geography filtering is a transformation decision — documented and tested alongside the model that uses it. |
+| **Dedicated Supabase project** | Shared project with mobility-zgz | Blast radius isolation. Credential rotation is independent. Free tier allows 2 active projects. |
+| **Pipeline as Supabase keepalive** | Separate ping mechanism | Supabase pauses free projects after 7 days. Daily pipeline keeps it active organically. Verified empirically on first run. |
+| **No cap on manual extraction window** | `max_window_days` safety cap | Single operator. Enterprise context would require chunking; that complexity is not justified here. |
+| **Dual log formatter (text/json)** | JSON-only | `LOG_FORMAT=text` locally (coloured); `LOG_FORMAT=json` in CI (structured). `os.getenv` used directly — importing `settings` here would create a circular dependency. |
+| **`DBT_ENABLED` feature flag** | Deploy dbt steps immediately | Lets the pipeline run green in CI before dbt is ready. No YAML rewrite when activating. Progressive delivery applied to a data pipeline. |
+| **`profiles.yml` in repo (no credentials)** | `~/.dbt/profiles.yml` only | CI runners have no home directory. `env_var()` in profiles.yml reads secrets injected by GitHub Actions — safe to commit, zero credentials hardcoded. |
+| **`sum` for generation pivot, not individual readings** | Raw diezminutal values | 6 readings × 10 min = 1 hour of energy. Summing is physically correct (MWh is additive). Averaging would give mean power, not total energy — semantically wrong. |
 
 ## Setup
 
 ### Prerequisites
 
-- Python 3.12+
-- conda environment with `pip install -r requirements.txt`
+- Python 3.12+ (conda env `dbt-course` recommended)
+- dbt Core 1.9.2 + dbt-postgres 1.9.0
 - Free ESIOS token: email `consultasios@ree.es`
-- Supabase project (free tier, Postgres 17)
+- Supabase project (free tier, Postgres 17, dedicated project)
 
 ### Local setup
 
@@ -127,22 +164,31 @@ pip install -r requirements.txt
 pytest tests/ -q                    # 5 tests, should be green
 python -m scripts.check_connection  # validates DB + provisions raw schema
 python -m extract.main              # automatic mode: loads D-2 to today
+
+cd dbt/esios_energy
+dbt build                           # seed + run + test (26 passing)
+dbt docs generate --static          # generates docs/index.html
+dbt docs serve                      # preview at localhost:8080
 ```
 
 ### VS Code launch configurations (`.vscode/launch.json`)
 
-Three configurations available in Run & Debug (`Ctrl+Shift+D`):
-
-| Configuration | Mode | Env vars |
-|---|---|---|
-| Extract: automatic | D-2 to today | none |
-| Extract: manual backfill | Custom date range | `EXTRACT_START`, `EXTRACT_END` |
-| Check connection | Smoke test | none |
+| Configuration | Mode |
+|---|---|
+| Extract: automatic | D-2 to today |
+| Extract: manual backfill | Custom date range via `EXTRACT_START` / `EXTRACT_END` |
+| Check connection | Smoke test |
 
 ### GitHub Actions setup
 
-See `docs/SETUP_CICD.md` for the complete one-time checklist:
-secrets, fine-grained PAT, cron-job.org job, and GitHub Pages configuration.
+See `docs/SETUP_CICD.md` for the complete one-time checklist.
+
+Activate dbt in CI: **Settings → Secrets and variables → Actions → Variables → `DBT_ENABLED=true`**
+
+## dbt docs
+
+Published to GitHub Pages on every CI run:
+`https://e-saldanaf.github.io/esios-energy-pipeline/`
 
 ## Env vars
 
@@ -150,7 +196,7 @@ secrets, fine-grained PAT, cron-job.org job, and GitHub Pages configuration.
 |---|---|---|
 | `ESIOS_API_TOKEN` | ✅ | Personal API token issued by REE |
 | `DB_HOST` | ✅ | Supabase session-pooler host |
-| `DB_PORT` | default 5432 | Postgres port — must be 5432 (session mode) |
+| `DB_PORT` | default 5432 | Must be 5432 (session mode) |
 | `DB_NAME` | default postgres | Database name |
 | `DB_USER` | ✅ | `postgres.<project-ref>` |
 | `DB_PASSWORD` | ✅ | Supabase database password |
@@ -162,28 +208,45 @@ secrets, fine-grained PAT, cron-job.org job, and GitHub Pages configuration.
 
 ```
 esios-energy-pipeline/
-├── .github/workflows/daily_pipeline.yml   # CI/CD: extract + dbt (gated) + keepalive
-├── docs/SETUP_CICD.md                     # One-time CI/CD setup checklist
+├── .github/workflows/daily_pipeline.yml
+├── docs/SETUP_CICD.md
+├── dbt/esios_energy/
+│   ├── dbt_project.yml
+│   ├── profiles.yml                      # env_var() only, safe to commit
+│   ├── seeds/technologies.csv            # 6 technologies catalogue
+│   └── models/
+│       ├── staging/
+│       │   ├── _sources.yml              # source + freshness + 4 tests
+│       │   ├── stg_esios__hourly_prices.sql
+│       │   ├── stg_esios__generation.sql
+│       │   └── stg_esios__technologies.sql
+│       ├── intermediate/
+│       │   └── int_hourly_market.sql
+│       └── marts/
+│           ├── _marts.yml                # 13 tests
+│           ├── fct_hourly_market.sql
+│           ├── mart_daily_summary.sql
+│           ├── mart_renewables_price_impact.sql
+│           └── mart_technology_mix.sql
 ├── extract/
-│   ├── config.py                          # pydantic-settings + indicator registry
-│   ├── esios_client.py                    # API client with retry + timeout
-│   ├── loader.py                          # stage-then-MERGE pattern
-│   ├── logging_setup.py                   # dual formatter (text/json)
-│   ├── main.py                            # pipeline entrypoint
-│   ├── sql_loader.py                      # loads .sql files with lru_cache
-│   ├── watermark.py                       # explicit date window logic
+│   ├── config.py
+│   ├── esios_client.py
+│   ├── loader.py
+│   ├── logging_setup.py
+│   ├── main.py
+│   ├── sql_loader.py
+│   ├── watermark.py
 │   └── sql/
-│       ├── ddl/create_raw_schema.sql      # idempotent raw schema + table
-│       ├── ddl/create_temp_staging.sql    # IF NOT EXISTS + TRUNCATE pattern
-│       └── merge/merge_indicator_values.sql  # ANSI MERGE with IS DISTINCT FROM
-├── dbt/                                   # 🔜 phase 3
-├── evidence/                              # 🔜 phase 4
+│       ├── ddl/create_raw_schema.sql
+│       ├── ddl/create_temp_staging.sql
+│       └── merge/merge_indicator_values.sql
+├── evidence/                             # 🔜 phase 4
 ├── scripts/
-│   ├── check_connection.py                # connectivity smoke test
-│   └── discover_indicators.py             # ESIOS catalogue browser
-├── tests/
-│   └── test_loader.py                     # unit tests for normalise_values
+│   ├── check_connection.py
+│   └── discover_indicators.py
+├── tests/test_loader.py
 ├── .env.example
 ├── README.md
+├── LEEME.md
 └── requirements.txt
 ```
