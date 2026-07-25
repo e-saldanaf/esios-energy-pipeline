@@ -1,0 +1,7 @@
+indicator_id,technology_name,technology_group,is_renewable
+2038,Eólica,Renovable,true
+2040,Carbón,No renovable,false
+2041,Ciclo combinado,No renovable,false
+2042,Hidráulica,Renovable,true
+2044,Solar fotovoltaica,Renovable,true
+2051,Cogeneración y residuos,No renovable,false
