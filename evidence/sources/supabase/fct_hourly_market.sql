@@ -1,0 +1,1 @@
+select * from analytics_marts.fct_hourly_market

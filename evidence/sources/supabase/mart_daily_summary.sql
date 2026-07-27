@@ -1,0 +1,1 @@
+select * from analytics_marts.mart_daily_summary

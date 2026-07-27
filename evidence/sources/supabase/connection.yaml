@@ -1,0 +1,15 @@
+# This file was automatically generated
+type: postgres
+name: supabase
+options:
+  database: postgres
+  host: aws-0-eu-west-1.pooler.supabase.com
+  port: 5432
+  schema: analytics_marts
+  ssl:
+    rejectUnauthorized: false
+    sslmode: prefer
+  _ssl: true
+# Advanced Options, you probably don't want to change this
+buildOptions:
+  batchSize: 1000000
