@@ -11,7 +11,7 @@ Proyecto de ingeniería analítica end-to-end sobre el mercado eléctrico españ
 (API pública de ESIOS/REE). **dbt Core es el protagonista**; todo lo demás existe
 para alimentarlo y mostrar su resultado. Coste total de infraestructura: **0 €**.
 
-🔗 **[Dashboard en vivo](https://tranquil-stroopwafel-f7f9d0.netlify.app)** · **[dbt Docs y Lineage](https://e-saldanaf.github.io/esios-energy-pipeline/)**
+🔗 **[Dashboard en vivo](https://esios-energy-es.netlify.app/)** · **[dbt Docs y Lineage](https://e-saldanaf.github.io/esios-energy-pipeline/)**
 
 ```
 cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
@@ -220,7 +220,7 @@ Activar dbt en CI: **Settings → Secrets and variables → Actions → Variable
 
 | Recurso | URL |
 |---|---|
-| Dashboard en vivo | https://tranquil-stroopwafel-f7f9d0.netlify.app |
+| Dashboard en vivo | https://esios-energy-es.netlify.app/ |
 | dbt docs y lineage | https://e-saldanaf.github.io/esios-energy-pipeline/ |
 
 ## Variables de entorno
