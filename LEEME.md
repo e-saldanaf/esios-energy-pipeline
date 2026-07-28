@@ -1,8 +1,17 @@
 # Pipeline de Datos del Mercado Eléctrico Español (ESIOS)
 
+![Python](https://img.shields.io/badge/Python-3.12-306998?logo=python&logoColor=white)
+![dbt](https://img.shields.io/badge/dbt-1.9.2-FF694B?logo=dbt&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-336791?logo=postgresql&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)
+![Netlify](https://img.shields.io/badge/Netlify-Dashboard-00C7B7?logo=netlify&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-Free_Tier-3ECF8E?logo=supabase&logoColor=white)
+
 Proyecto de ingeniería analítica end-to-end sobre el mercado eléctrico español
 (API pública de ESIOS/REE). **dbt Core es el protagonista**; todo lo demás existe
 para alimentarlo y mostrar su resultado. Coste total de infraestructura: **0 €**.
+
+🔗 **[Dashboard en vivo](https://tranquil-stroopwafel-f7f9d0.netlify.app)** · **[dbt Docs y Lineage](https://e-saldanaf.github.io/esios-energy-pipeline/)**
 
 ```
 cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
@@ -15,7 +24,7 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
                           ├── 17 tests (fuente + modelos)
                           ├── dbt docs ──▶ GitHub Pages
                           ▼
-                     Evidence.dev dashboard estático (🔜)
+                     Evidence.dev dashboard estático ──▶ Netlify
 ```
 
 ## Estado del proyecto
@@ -25,7 +34,7 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
 | 1. Capa de extracción (ventana explícita + MERGE + directorio SQL) | ✅ Completada |
 | 2. CI/CD (Actions + secrets + keepalive + inputs de backfill manual) | ✅ Completada |
 | 3. Capa dbt (staging, intermediate, marts, tests, docs) | ✅ Completada |
-| 4. Dashboard Evidence.dev | 🔜 Siguiente |
+| 4. Dashboard Evidence.dev → Netlify | ✅ Completada |
 | 5. cron-job.org (scheduling preciso) | 🔜 Pendiente |
 | 6. Indicador de demanda + correlación con clima | 🗺️ Roadmap |
 
@@ -124,6 +133,17 @@ mart_technology_mix
 
 **dbt docs:** publicados en GitHub Pages en cada ejecución de CI.
 
+### Dashboard Evidence.dev
+
+4 páginas desplegadas en Netlify, reconstruidas en cada ejecución de CI:
+
+| Página | Contenido |
+|---|---|
+| **Home** | KPIs (30d) + precio diario + mix del último mes |
+| **Precio Spot** | Histórico completo de precio + tendencia mensual vs renovables + horas de precio negativo |
+| **Impacto Renovable** | Scatter del merit order effect + precio por bucket de renovable |
+| **Mix Tecnológico** | Evolución mensual renovable/fósil + área apilada MWh + días con precio negativo |
+
 ## Registro de decisiones
 
 | Decisión | Alternativa rechazada | Por qué |
@@ -147,7 +167,8 @@ mart_technology_mix
 | **Formateador de logs dual (text/json)** | Solo JSON | `LOG_FORMAT=text` en local (con colores); `LOG_FORMAT=json` en CI (estructurado). `os.getenv` directo — importar `settings` crearía dependencia circular. |
 | **Feature flag `DBT_ENABLED`** | Desplegar steps de dbt inmediatamente | Permite que el pipeline corra en verde en CI antes de que dbt esté listo. Sin reescribir el YAML al activarlo. |
 | **`profiles.yml` en el repo (sin credenciales)** | Solo `~/.dbt/profiles.yml` | Los runners de CI no tienen directorio home. `env_var()` lee los secrets inyectados por GitHub Actions — seguro para commitear. |
-| **Materialización `view` en staging e intermediate, `table` en marts** | Todo `table` o todo `view` | Las vistas no ocupan espacio y siempre están actualizadas — correcto para capas de transformación. Las tablas son necesarias en marts porque Evidence las consulta directamente: sin tabla física, cada visita al dashboard recalcularía sobre millones de filas raw. |
+| **Evidence.dev en Netlify, dbt docs en GitHub Pages** | Ambos en GitHub Pages | GitHub Pages ya ocupado por dbt docs. Dos URLs separadas mantiene cada herramienta en su sitio — narrativa más limpia y cero conflicto. |
+| **`npm run sources && npm run build` como build command de Netlify** | Solo `npm run build` | Evidence necesita descargar los datos de Supabase antes de construir. Las fuentes deben ejecutarse primero — descubierto en el primer deploy de Netlify. |
 
 ## Configuración
 
@@ -155,6 +176,7 @@ mart_technology_mix
 
 - Python 3.12+ (entorno conda `dbt-course` recomendado)
 - dbt Core 1.9.2 + dbt-postgres 1.9.0
+- Node.js 20+ (para Evidence)
 - Token gratuito de ESIOS: email a `consultasios@ree.es`
 - Proyecto Supabase dedicado (free tier, Postgres 17)
 
@@ -173,6 +195,11 @@ cd dbt/esios_energy
 dbt build                           # seed + run + test (26 en verde)
 dbt docs generate --static          # genera docs/index.html
 dbt docs serve                      # preview en localhost:8080
+
+cd ../../evidence
+npm install
+NODE_TLS_REJECT_UNAUTHORIZED=0 npm run sources   # descarga datos de Supabase
+npm run dev                          # preview en localhost:3000
 ```
 
 ### Configuraciones de VS Code (`.vscode/launch.json`)
@@ -189,10 +216,12 @@ Ver `docs/SETUP_CICD.md` para el checklist completo.
 
 Activar dbt en CI: **Settings → Secrets and variables → Actions → Variables → `DBT_ENABLED=true`**
 
-## dbt docs públicos
+## Enlaces
 
-Publicados en GitHub Pages en cada ejecución de CI:
-`https://e-saldanaf.github.io/esios-energy-pipeline/`
+| Recurso | URL |
+|---|---|
+| Dashboard en vivo | https://tranquil-stroopwafel-f7f9d0.netlify.app |
+| dbt docs y lineage | https://e-saldanaf.github.io/esios-energy-pipeline/ |
 
 ## Variables de entorno
 
@@ -232,6 +261,13 @@ esios-energy-pipeline/
 │           ├── mart_daily_summary.sql
 │           ├── mart_renewables_price_impact.sql
 │           └── mart_technology_mix.sql
+├── evidence/
+│   ├── sources/supabase/                  # queries SQL + config de conexión
+│   └── pages/
+│       ├── index.md                       # Home — KPIs + precio 30d
+│       ├── precio.md                      # Histórico de precio
+│       ├── renovables.md                  # Merit order effect
+│       └── tecnologias.md                # Mix tecnológico
 ├── extract/
 │   ├── config.py
 │   ├── esios_client.py
@@ -244,13 +280,12 @@ esios-energy-pipeline/
 │       ├── ddl/create_raw_schema.sql
 │       ├── ddl/create_temp_staging.sql
 │       └── merge/merge_indicator_values.sql
-├── evidence/                              # 🔜 fase 4
 ├── scripts/
 │   ├── check_connection.py
 │   └── discover_indicators.py
 ├── tests/test_loader.py
 ├── .env.example
 ├── README.md                              # Versión en inglés
-├── LEEME.md                              # Este fichero
+├── LEEME.md                               # Este fichero
 └── requirements.txt
 ```

@@ -1,8 +1,17 @@
 # ESIOS Energy Pipeline
 
+![Python](https://img.shields.io/badge/Python-3.12-306998?logo=python&logoColor=white)
+![dbt](https://img.shields.io/badge/dbt-1.9.2-FF694B?logo=dbt&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-336791?logo=postgresql&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)
+![Netlify](https://img.shields.io/badge/Netlify-Dashboard-00C7B7?logo=netlify&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-Free_Tier-3ECF8E?logo=supabase&logoColor=white)
+
 End-to-end analytics engineering project on the Spanish electricity market
 (ESIOS/REE public API). **dbt Core is the star**; everything else exists to
 feed it and show its output. Total infrastructure cost: **0 €**.
+
+🔗 **[Live Dashboard](https://tranquil-stroopwafel-f7f9d0.netlify.app)** · **[dbt Docs & Lineage](https://e-saldanaf.github.io/esios-energy-pipeline/)**
 
 ```
 cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
@@ -15,7 +24,7 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
                           ├── 17 tests (source + models)
                           ├── dbt docs ──▶ GitHub Pages
                           ▼
-                     Evidence.dev static dashboard (🔜)
+                     Evidence.dev static dashboard ──▶ Netlify
 ```
 
 ## Project status
@@ -25,7 +34,7 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
 | 1. Extract layer (explicit window + MERGE + SQL directory) | ✅ Complete |
 | 2. CI/CD (Actions + secrets + keepalive + manual backfill inputs) | ✅ Complete |
 | 3. dbt layer (staging, intermediate, marts, tests, docs) | ✅ Complete |
-| 4. Evidence.dev dashboard | 🔜 Next |
+| 4. Evidence.dev dashboard → Netlify | ✅ Complete |
 | 5. cron-job.org (precise scheduling) | 🔜 Pending |
 | 6. Demand indicator + weather correlation | 🗺️ Roadmap |
 
@@ -120,6 +129,17 @@ mart_technology_mix
 
 **dbt docs:** published to GitHub Pages on every CI run.
 
+### Evidence.dev dashboard
+
+4 pages deployed on Netlify, rebuilt on every CI run:
+
+| Page | Content |
+|---|---|
+| **Home** | KPIs (30d) + daily price chart + last month mix |
+| **Precio Spot** | Full price history + monthly trend vs renewables + negative price hours |
+| **Impacto Renovable** | Merit order effect scatter + price by renewable bucket |
+| **Mix Tecnológico** | Monthly renewable/fossil evolution + stacked MWh area + negative price days |
+
 ## Decisions log
 
 | Decision | Alternative rejected | Why |
@@ -135,7 +155,7 @@ mart_technology_mix
 | **SQL in `.sql` files** | SQL strings inside Python | Reviewable diffs, sqlfluff-lintable. Python orchestrates; SQL declares. dbt's philosophy applied to the extract layer. |
 | **One generic raw table (long format)** | One table per indicator | Adding an indicator = one config line, zero DDL. Pivoting belongs to dbt staging. |
 | **10-minute raw, hourly in staging** | Hourly-only ingestion | ESIOS national indicators are natively 10-minute. Raw preserves source fidelity; `date_trunc + sum/avg` in staging produces hourly grain. Transformation belongs to the transform layer. |
-| **`avg` for price aggregation, `sum` for generation** | Both `sum` or both `avg` | Price is a rate (€/MWh) — average is semantically correct. Generation is energy (MWh) — additive, so sum is correct. Domain semantics drive the aggregation function. |
+| **`avg` for price, `sum` for generation** | Both `sum` or both `avg` | Price is a rate (€/MWh) — average is semantically correct. Generation is energy (MWh) — additive, so sum is correct. Domain semantics drive the aggregation function. |
 | **`geo_id=3` filter in staging, not in extract** | Filter at API request time | Extract has no opinion on business logic. Geography filtering is a transformation decision — documented and tested alongside the model that uses it. |
 | **Dedicated Supabase project** | Shared project with mobility-zgz | Blast radius isolation. Credential rotation is independent. Free tier allows 2 active projects. |
 | **Pipeline as Supabase keepalive** | Separate ping mechanism | Supabase pauses free projects after 7 days. Daily pipeline keeps it active organically. Verified empirically on first run. |
@@ -143,7 +163,8 @@ mart_technology_mix
 | **Dual log formatter (text/json)** | JSON-only | `LOG_FORMAT=text` locally (coloured); `LOG_FORMAT=json` in CI (structured). `os.getenv` used directly — importing `settings` here would create a circular dependency. |
 | **`DBT_ENABLED` feature flag** | Deploy dbt steps immediately | Lets the pipeline run green in CI before dbt is ready. No YAML rewrite when activating. Progressive delivery applied to a data pipeline. |
 | **`profiles.yml` in repo (no credentials)** | `~/.dbt/profiles.yml` only | CI runners have no home directory. `env_var()` in profiles.yml reads secrets injected by GitHub Actions — safe to commit, zero credentials hardcoded. |
-| **`sum` for generation pivot, not individual readings** | Raw diezminutal values | 6 readings × 10 min = 1 hour of energy. Summing is physically correct (MWh is additive). Averaging would give mean power, not total energy — semantically wrong. |
+| **Evidence.dev on Netlify, dbt docs on GitHub Pages** | Both on GitHub Pages | GitHub Pages already occupied by dbt docs. Two separate URLs keeps each tool in its own space — cleaner narrative and zero conflict. |
+| **`npm run sources && npm run build` as Netlify build command** | `npm run build` alone | Evidence needs to download data from Supabase before building. Sources must run first — discovered on first Netlify deploy. |
 
 ## Setup
 
@@ -151,6 +172,7 @@ mart_technology_mix
 
 - Python 3.12+ (conda env `dbt-course` recommended)
 - dbt Core 1.9.2 + dbt-postgres 1.9.0
+- Node.js 20+ (for Evidence)
 - Free ESIOS token: email `consultasios@ree.es`
 - Supabase project (free tier, Postgres 17, dedicated project)
 
@@ -169,6 +191,11 @@ cd dbt/esios_energy
 dbt build                           # seed + run + test (26 passing)
 dbt docs generate --static          # generates docs/index.html
 dbt docs serve                      # preview at localhost:8080
+
+cd ../../evidence
+npm install
+NODE_TLS_REJECT_UNAUTHORIZED=0 npm run sources   # download data from Supabase
+npm run dev                         # preview at localhost:3000
 ```
 
 ### VS Code launch configurations (`.vscode/launch.json`)
@@ -185,10 +212,12 @@ See `docs/SETUP_CICD.md` for the complete one-time checklist.
 
 Activate dbt in CI: **Settings → Secrets and variables → Actions → Variables → `DBT_ENABLED=true`**
 
-## dbt docs
+## Links
 
-Published to GitHub Pages on every CI run:
-`https://e-saldanaf.github.io/esios-energy-pipeline/`
+| Resource | URL |
+|---|---|
+| Live dashboard | https://tranquil-stroopwafel-f7f9d0.netlify.app |
+| dbt docs + lineage | https://e-saldanaf.github.io/esios-energy-pipeline/ |
 
 ## Env vars
 
@@ -228,6 +257,13 @@ esios-energy-pipeline/
 │           ├── mart_daily_summary.sql
 │           ├── mart_renewables_price_impact.sql
 │           └── mart_technology_mix.sql
+├── evidence/
+│   ├── sources/supabase/                 # SQL queries + connection config
+│   └── pages/
+│       ├── index.md                      # Home — KPIs + 30d price
+│       ├── precio.md                     # Price history
+│       ├── renovables.md                 # Merit order effect
+│       └── tecnologias.md               # Technology mix
 ├── extract/
 │   ├── config.py
 │   ├── esios_client.py
@@ -240,7 +276,6 @@ esios-energy-pipeline/
 │       ├── ddl/create_raw_schema.sql
 │       ├── ddl/create_temp_staging.sql
 │       └── merge/merge_indicator_values.sql
-├── evidence/                             # 🔜 phase 4
 ├── scripts/
 │   ├── check_connection.py
 │   └── discover_indicators.py
