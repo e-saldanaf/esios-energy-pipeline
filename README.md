@@ -35,7 +35,7 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
 | 2. CI/CD (Actions + secrets + keepalive + manual backfill inputs) | ✅ Complete |
 | 3. dbt layer (staging, intermediate, marts, tests, docs) | ✅ Complete |
 | 4. Evidence.dev dashboard → Netlify | ✅ Complete |
-| 5. cron-job.org (precise scheduling) | 🔜 Pending |
+| 5. cron-job.org (precise scheduling) | ✅ Complete |
 | 6. Demand indicator + weather correlation | 🗺️ Roadmap |
 
 ## Architecture
@@ -165,6 +165,8 @@ mart_technology_mix
 | **`profiles.yml` in repo (no credentials)** | `~/.dbt/profiles.yml` only | CI runners have no home directory. `env_var()` in profiles.yml reads secrets injected by GitHub Actions — safe to commit, zero credentials hardcoded. |
 | **Evidence.dev on Netlify, dbt docs on GitHub Pages** | Both on GitHub Pages | GitHub Pages already occupied by dbt docs. Two separate URLs keeps each tool in its own space — cleaner narrative and zero conflict. |
 | **`npm run sources && npm run build` as Netlify build command** | `npm run build` alone | Evidence needs to download data from Supabase before building. Sources must run first — discovered on first Netlify deploy. |
+| **`git pull --rebase --autostash` before keepalive push** | Plain `git push` | Race condition: concurrent runs (schedule + workflow_dispatch) can both reach the keepalive step close in time. Second run's local copy is stale, push gets rejected. Rebase with autostash resolves cleanly since both commits only touch a timestamp file — no real conflict. |
+| **Netlify Build Hook triggered explicitly after `dbt build`** | Relying on Netlify's file-change detection | Netlify's base directory is `evidence/`; the keepalive commit only touches `.github/last_run.txt`, so Netlify correctly detects "no changes" and cancels the build — dashboard silently froze on stale data for 10 days. Explicit hook bypasses change detection entirely. |
 
 ## Setup
 

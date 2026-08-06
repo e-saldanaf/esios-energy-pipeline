@@ -35,7 +35,7 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
 | 2. CI/CD (Actions + secrets + keepalive + inputs de backfill manual) | ✅ Completada |
 | 3. Capa dbt (staging, intermediate, marts, tests, docs) | ✅ Completada |
 | 4. Dashboard Evidence.dev → Netlify | ✅ Completada |
-| 5. cron-job.org (scheduling preciso) | 🔜 Pendiente |
+| 5. cron-job.org (scheduling preciso) | ✅ Completada |
 | 6. Indicador de demanda + correlación con clima | 🗺️ Roadmap |
 
 ## Arquitectura
@@ -169,6 +169,8 @@ mart_technology_mix
 | **`profiles.yml` en el repo (sin credenciales)** | Solo `~/.dbt/profiles.yml` | Los runners de CI no tienen directorio home. `env_var()` lee los secrets inyectados por GitHub Actions — seguro para commitear. |
 | **Evidence.dev en Netlify, dbt docs en GitHub Pages** | Ambos en GitHub Pages | GitHub Pages ya ocupado por dbt docs. Dos URLs separadas mantiene cada herramienta en su sitio — narrativa más limpia y cero conflicto. |
 | **`npm run sources && npm run build` como build command de Netlify** | Solo `npm run build` | Evidence necesita descargar los datos de Supabase antes de construir. Las fuentes deben ejecutarse primero — descubierto en el primer deploy de Netlify. |
+| **`git pull --rebase --autostash` antes del push del keepalive** | `git push` simple | Race condition: runs concurrentes (schedule + workflow_dispatch) pueden llegar al step de keepalive muy cerca en el tiempo. La copia local del segundo run queda desactualizada y el push es rechazado. El rebase con autostash lo resuelve sin conflicto real, porque ambos commits solo tocan un fichero de timestamp. |
+| **Build Hook de Netlify disparado explícitamente tras `dbt build`** | Confiar en la detección de cambios de Netlify | El base directory de Netlify es `evidence/`; el keepalive commit solo toca `.github/last_run.txt`, así que Netlify detecta correctamente "sin cambios" y cancela el build — el dashboard se quedó congelado con datos obsoletos durante 10 días sin ningún aviso. El hook explícito evita por completo la detección de cambios. |
 
 ## Configuración
 
