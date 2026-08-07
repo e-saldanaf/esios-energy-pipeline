@@ -71,10 +71,6 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: dbt docs generate --profiles-dir . --static
       
-      - name: Trigger Evidence rebuild
-        if: vars.DBT_ENABLED == 'true'
-        run: curl -X POST -d {} ${{ secrets.NETLIFY_BUILD_HOOK }}
-
       - name: Upload docs artifact
         if: vars.DBT_ENABLED == 'true'
         uses: actions/upload-pages-artifact@v3
