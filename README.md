@@ -14,7 +14,7 @@ feed it and show its output. Total infrastructure cost: **0 €**.
 🔗 **[Live Dashboard](https://esios-energy-es.netlify.app/)** · **[dbt Docs & Lineage](https://e-saldanaf.github.io/esios-energy-pipeline/)**
 
 ```
-cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
+cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions (daily)
                                           │
                     Python extract (explicit date window, ESIOS API)
                                           ▼
@@ -24,26 +24,32 @@ cron-job.org ──▶ workflow_dispatch ──▶ GitHub Actions
                           ├── 17 tests (source + models)
                           ├── dbt docs ──▶ GitHub Pages
                           ▼
-                     Evidence.dev static dashboard ──▶ Netlify
+                     (data ready in Supabase marts)
+
+cron-job.org ──▶ Netlify Build Hook (every 3 days) ──▶ Evidence.dev rebuild
 ```
+
+Two independent daily-frequency pipelines, decoupled by design (see decisions
+log): one keeps data fresh in Supabase every day, the other refreshes the
+public dashboard every 3 days to stay within Netlify's free-tier credits.
 
 ## Project status
 
 | Phase | Status |
 |---|---|
 | 1. Extract layer (explicit window + MERGE + SQL directory) | ✅ Complete |
-| 2. CI/CD (Actions + secrets + keepalive + manual backfill inputs) | ✅ Complete |
+| 2. CI/CD (Actions + secrets + manual backfill inputs) | ✅ Complete |
 | 3. dbt layer (staging, intermediate, marts, tests, docs) | ✅ Complete |
 | 4. Evidence.dev dashboard → Netlify | ✅ Complete |
-| 5. cron-job.org (precise scheduling) | ✅ Complete |
+| 5. cron-job.org (precise scheduling, decoupled Evidence rebuild) | ✅ Complete |
 | 6. Demand indicator + weather correlation | 🗺️ Roadmap |
 
 ## Architecture
 
 ### Extract layer
 
-The pipeline runs daily via GitHub Actions, triggered by cron-job.org through
-`workflow_dispatch` (primary) with a native `schedule` as best-effort fallback.
+The pipeline runs daily via GitHub Actions, triggered exclusively by
+cron-job.org through `workflow_dispatch` at 07:15 (Europe/Madrid).
 
 Two extraction modes:
 
@@ -113,7 +119,7 @@ hourly_prices    generation        technologies
     (view — price × generation join)
             │
             ▼
-    fct_hourly_market          ← 13,635 rows, table
+    fct_hourly_market          ← 13,635+ rows, table
             │
     ┌───────┴──────────────────┐
     ▼                          ▼
@@ -131,7 +137,8 @@ mart_technology_mix
 
 ### Evidence.dev dashboard
 
-4 pages deployed on Netlify, rebuilt on every CI run:
+4 pages deployed on Netlify, rebuilt independently every 3 days via a
+dedicated cron-job.org job hitting the Netlify Build Hook directly:
 
 | Page | Content |
 |---|---|
@@ -140,33 +147,38 @@ mart_technology_mix
 | **Impacto Renovable** | Merit order effect scatter + price by renewable bucket |
 | **Mix Tecnológico** | Monthly renewable/fossil evolution + stacked MWh area + negative price days |
 
+To force an immediate rebuild (e.g. before a demo):
+
+```bash
+curl -X POST -d "{}" https://api.netlify.com/build_hooks/<hook-id>
+```
+
 ## Decisions log
 
 | Decision | Alternative rejected | Why |
 |---|---|---|
-| **No Airflow** | Airflow (daily driver at work) | A single daily batch with no cross-DAG dependencies doesn't justify an orchestrator's operational cost. Choosing NOT to use a tool you know is an architecture decision too. |
-| **cron-job.org → `workflow_dispatch`** | GitHub `schedule` alone | Measured evidence: hourly `schedule` crons achieved ~42% hit rate on this account. Dispatch via REST API starts in seconds. Native cron kept as fallback. |
+| **No Airflow** | Airflow as the daily orchestrator | A single daily batch with no cross-DAG dependencies doesn't justify an orchestrator's operational cost. Choosing NOT to use a tool is an architecture decision too. |
+| **cron-job.org as sole trigger, native `schedule` removed** | Keep both (dispatch + schedule fallback) | With cron-job.org proven reliable (verified: consecutive successful dispatches), the native `schedule` stopped being a useful fallback and became pure harmful redundancy: both triggers fired the full pipeline the same day, doubling Netlify deploys and burning through the free-tier credit budget (150/300 credits consumed in 11 days, projected to run out before the billing cycle ended). |
 | **Explicit date window (D-2/D)** | Watermark-based extraction | Watermark creates implicit state. Explicit parameters are simpler, more predictable, and easier to reason about. `updated_at` answers "what changed recently?" without any watermark query. D-2 overlap captures ESIOS revisions via `IS DISTINCT FROM`. |
 | **Inclusive end date UX** | Exclusive end (API convention) | Users think in calendar dates. The code adds one day internally — API boundary is an implementation detail. |
-| **Postgres (Supabase) as warehouse** | MotherDuck / columnar DWH | At ~10² rows/day, columnar storage buys nothing. Free tier, most mature dbt adapter. I know exactly at which volume this stops scaling — and I'd move to Redshift, which I run in production. |
+| **Postgres (Supabase) as warehouse** | MotherDuck / columnar DWH | At ~10² rows/day, columnar storage buys nothing. Free tier, most mature dbt adapter. I know exactly at which volume this stops scaling — and I'd move to Redshift. |
 | **Session pooler (port 5432)** | Direct connection / transaction pooler | Direct connection is IPv6-only → CI runners fail. Transaction pooler destroys temp tables → MERGE pattern breaks. Session pooler satisfies both constraints simultaneously. |
 | **`MERGE` (SQL:2003)** | `INSERT ... ON CONFLICT` | ANSI standard → transferable to Redshift/Snowflake/BigQuery. `IS DISTINCT FROM` writes only real changes. ESIOS revises published values — real business case, not boilerplate. |
 | **`IF NOT EXISTS` + `TRUNCATE` on temp table** | `DROP / CREATE` per indicator | Discovered on first production run. Savepoint rollback doesn't destroy temp tables — `IF NOT EXISTS` + `TRUNCATE` makes the loader idempotent across indicators. |
+| **`git pull --rebase --autostash` before keepalive push** | Plain `git push` | Race condition: concurrent runs reaching the keepalive step close in time leave the second run's local copy stale, causing a rejected push. Rebase with autostash resolves cleanly — both commits only touch a timestamp file, no real conflict. |
+| **Evidence rebuild decoupled, every 3 days via a dedicated cron-job.org job** | Rebuild inside the daily data pipeline | A daily Build Hook trigger projected 450 credits/month against Netlify's 300-credit free-tier limit. Data refreshes daily in Supabase regardless; the public dashboard only needs a reasonable cadence, not real-time. Every 3 days = ~150 credits/month, leaving margin for manual rebuilds before a demo. Also uncovered and fixed: Netlify's file-change detection silently canceled builds triggered by the keepalive commit (it only touches a file outside `evidence/`), so relying on git-push-triggered builds alone had already left the dashboard frozen on stale data for 10 days undetected — the explicit Build Hook bypasses that detection entirely. |
 | **SQL in `.sql` files** | SQL strings inside Python | Reviewable diffs, sqlfluff-lintable. Python orchestrates; SQL declares. dbt's philosophy applied to the extract layer. |
 | **One generic raw table (long format)** | One table per indicator | Adding an indicator = one config line, zero DDL. Pivoting belongs to dbt staging. |
-| **10-minute raw, hourly in staging** | Hourly-only ingestion | ESIOS national indicators are natively 10-minute. Raw preserves source fidelity; `date_trunc + sum/avg` in staging produces hourly grain. Transformation belongs to the transform layer. |
+| **10-minute raw, hourly in staging** | Hourly-only ingestion | ESIOS national indicators are natively 10-minute. Raw preserves source fidelity; `date_trunc + sum/avg` in staging produces hourly grain. |
 | **`avg` for price, `sum` for generation** | Both `sum` or both `avg` | Price is a rate (€/MWh) — average is semantically correct. Generation is energy (MWh) — additive, so sum is correct. Domain semantics drive the aggregation function. |
 | **`geo_id=3` filter in staging, not in extract** | Filter at API request time | Extract has no opinion on business logic. Geography filtering is a transformation decision — documented and tested alongside the model that uses it. |
-| **Dedicated Supabase project** | Shared project with mobility-zgz | Blast radius isolation. Credential rotation is independent. Free tier allows 2 active projects. |
-| **Pipeline as Supabase keepalive** | Separate ping mechanism | Supabase pauses free projects after 7 days. Daily pipeline keeps it active organically. Verified empirically on first run. |
+| **Dedicated Supabase project** | Shared project with another portfolio pipeline | Blast radius isolation. Credential rotation is independent. Free tier allows 2 active projects. |
+| **Pipeline as Supabase keepalive** | Separate ping mechanism | Supabase pauses free projects after 7 days. Daily pipeline keeps it active organically. |
 | **No cap on manual extraction window** | `max_window_days` safety cap | Single operator. Enterprise context would require chunking; that complexity is not justified here. |
 | **Dual log formatter (text/json)** | JSON-only | `LOG_FORMAT=text` locally (coloured); `LOG_FORMAT=json` in CI (structured). `os.getenv` used directly — importing `settings` here would create a circular dependency. |
-| **`DBT_ENABLED` feature flag** | Deploy dbt steps immediately | Lets the pipeline run green in CI before dbt is ready. No YAML rewrite when activating. Progressive delivery applied to a data pipeline. |
-| **`profiles.yml` in repo (no credentials)** | `~/.dbt/profiles.yml` only | CI runners have no home directory. `env_var()` in profiles.yml reads secrets injected by GitHub Actions — safe to commit, zero credentials hardcoded. |
-| **Evidence.dev on Netlify, dbt docs on GitHub Pages** | Both on GitHub Pages | GitHub Pages already occupied by dbt docs. Two separate URLs keeps each tool in its own space — cleaner narrative and zero conflict. |
-| **`npm run sources && npm run build` as Netlify build command** | `npm run build` alone | Evidence needs to download data from Supabase before building. Sources must run first — discovered on first Netlify deploy. |
-| **`git pull --rebase --autostash` before keepalive push** | Plain `git push` | Race condition: concurrent runs (schedule + workflow_dispatch) can both reach the keepalive step close in time. Second run's local copy is stale, push gets rejected. Rebase with autostash resolves cleanly since both commits only touch a timestamp file — no real conflict. |
-| **Netlify Build Hook triggered explicitly after `dbt build`** | Relying on Netlify's file-change detection | Netlify's base directory is `evidence/`; the keepalive commit only touches `.github/last_run.txt`, so Netlify correctly detects "no changes" and cancels the build — dashboard silently froze on stale data for 10 days. Explicit hook bypasses change detection entirely. |
+| **`DBT_ENABLED` feature flag** | Deploy dbt steps immediately | Lets the pipeline run green in CI before dbt is ready. No YAML rewrite when activating. |
+| **`profiles.yml` in repo (no credentials)** | `~/.dbt/profiles.yml` only | CI runners have no home directory. `env_var()` reads secrets injected by GitHub Actions — safe to commit. |
+| **Evidence.dev on Netlify, dbt docs on GitHub Pages** | Both on GitHub Pages | GitHub Pages already occupied by dbt docs. Two separate URLs keeps each tool in its own space. |
 
 ## Setup
 
@@ -213,6 +225,13 @@ npm run dev                         # preview at localhost:3000
 See `docs/SETUP_CICD.md` for the complete one-time checklist.
 
 Activate dbt in CI: **Settings → Secrets and variables → Actions → Variables → `DBT_ENABLED=true`**
+
+### Scheduling (two independent cron-job.org jobs)
+
+| Job | Target | Frequency |
+|---|---|---|
+| `esios-pipeline-daily` | GitHub Actions `workflow_dispatch` | Daily, 07:15 |
+| `esios-evidence-rebuild` | Netlify Build Hook (direct POST) | Every 3 days, 08:00 |
 
 ## Links
 
