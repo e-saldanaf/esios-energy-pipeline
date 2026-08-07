@@ -9,8 +9,7 @@ on:
       extract_end:
         description: "End date (yyyy-mm-dd). Leave empty for automatic mode (today)."
         required: false
-  schedule:
-    - cron: "23 6 * * *"
+
 
 concurrency:
   group: daily-pipeline
